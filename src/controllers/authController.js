@@ -1,4 +1,4 @@
-// controllers/auth.controller.js (exemple de nom de fichier)
+// controllers/auth.controller.js
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 const {
@@ -14,6 +14,9 @@ const { OAuth2Client } = require('google-auth-library');
 const client = new OAuth2Client(
   '643716741024-b17obejeud2ksngkbj3722smrttnkk0d.apps.googleusercontent.com'
 );
+
+/* === Durée de vie des JWT (3h par défaut) === */
+const ACCESS_TOKEN_TTL = process.env.JWT_EXPIRES_IN || '3h';
 
 /* ----------------------------- Helpers rôles ----------------------------- */
 
@@ -47,7 +50,7 @@ exports.register = async (req, res) => {
       return res.status(409).json({ message: 'Login déjà utilisé' });
     }
 
-    // 1) Créer le partner (Odoo stocke l'email côté partner)
+    // 1) Créer le partner
     const lastPartner = await res_partner.findOne({ order: [['id', 'DESC']] });
     const nextPartnerId = (lastPartner?.id || 0) + 1;
 
@@ -67,14 +70,14 @@ exports.register = async (req, res) => {
     const hashedPassword = await bcrypt.hash(password, 10);
     const newUser = await res_users.create({
       login,
-      email,                // facultatif selon ton schéma, on le laisse
+      email,
       password: hashedPassword,
-      active: false,        // par défaut
+      active: false,
       partner_id: newPartner.id,
       company_id: 1,
     });
 
-    // 3) Assigner le(s) groupe(s) en fonction du rôle demandé
+    // 3) Assigner le(s) groupe(s)
     const r = String(role || '').toLowerCase();
     let where;
     if (r === 'agent' || r === 'employee') {
@@ -143,7 +146,7 @@ exports.login = async (req, res) => {
     const groups = await res_groups.findAll({ where: { id: links.map(l => l.gid) }, attributes: ['name'] });
     const role = inferRoleFromGroups(groups).toUpperCase();  // ADMIN | AGENT | CLIENT
 
-    // 4) JWT
+    // 4) JWT —> durée 3h
     const token = jwt.sign(
       {
         id: user.id,
@@ -153,7 +156,7 @@ exports.login = async (req, res) => {
         partner_id: user.partner_id,
       },
       process.env.JWT_SECRET,
-      { expiresIn: '2h' }
+      { expiresIn: ACCESS_TOKEN_TTL } // <<< 3 heures
     );
 
     res.status(200).json({
@@ -178,7 +181,6 @@ exports.login = async (req, res) => {
 
 exports.getUserStats = async (req, res) => {
   try {
-    // Exclure les admins des stats de base
     const adminGroup = await res_groups.findOne({
       where: { name: { [Op.iLike]: 'admin' } },
     });
@@ -267,7 +269,6 @@ exports.updateUser = async (req, res) => {
 
 exports.getClients = async (req, res) => {
   try {
-    // Tous les users appartenant à un groupe ressemblant à "client/portal"
     const users = await res_users.findAll({
       attributes: ['id', 'login', 'active', 'partner_id'],
       include: [
@@ -349,6 +350,7 @@ exports.googleLogin = async (req, res) => {
     const groups = await res_groups.findAll({ where: { id: links.map(l => l.gid) }, attributes: ['name'] });
     const role = inferRoleFromGroups(groups).toUpperCase();
 
+    // JWT Google —> durée 3h
     const token = jwt.sign(
       {
         id: user.id,
@@ -358,7 +360,7 @@ exports.googleLogin = async (req, res) => {
         partner_id: user.partner_id,
       },
       process.env.JWT_SECRET,
-      { expiresIn: '2h' }
+      { expiresIn: ACCESS_TOKEN_TTL } // <<< 3 heures
     );
 
     res.status(200).json({ token, role, user });
