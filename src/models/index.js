@@ -32,6 +32,7 @@ db.Prestation = require('./prestation_prestation')(sequelize, DataTypes); // pub
 db.Document = require('./Document')(sequelize, DataTypes);
 db.RendezVous = require('./RendezVous')(sequelize, DataTypes);
 db.Disponibilite = require('./Disponibilite')(sequelize, DataTypes);
+db.FicheSuivi2025 = require('./fiche_suivi_2025')(sequelize, Sequelize.DataTypes);
 
 // 🔗 Associations : utilisateurs <-> groupes
 db.res_users.belongsToMany(db.res_groups, {
