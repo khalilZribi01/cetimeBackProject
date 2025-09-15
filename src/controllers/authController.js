@@ -245,25 +245,106 @@ exports.getUserById = async (req, res) => {
 
 /* ------------------------------ Update user ----------------------------- */
 
+// controllers/auth.controller.js
 exports.updateUser = async (req, res) => {
   const { id } = req.params;
-  const { active } = req.body;
+  const { active, login, email, name, password } = req.body || {};
 
   try {
-    const user = await res_users.findByPk(id);
-    if (!user) return res.status(404).json({ message: 'Utilisateur introuvable' });
+    // Permissions (suppose un middleware JWT qui remplit req.user)
+    const requester = req.user || {};
+    const isAdmin = (requester.role || "").toUpperCase() === "ADMIN";
+    const isSelf = String(requester.id || "") === String(id);
 
-    if (typeof active === 'boolean') {
-      user.active = active;
-      await user.save();
-      return res.status(200).json({ message: `✅ Utilisateur ${user.login} mis à jour.` });
+    if (!isSelf && !isAdmin) {
+      return res.status(403).json({ message: "⛔ Accès refusé" });
     }
-    return res.status(400).json({ message: "Champ 'active' invalide (attendu: true ou false)." });
+
+    // Charger l'utilisateur + partner
+    const user = await res_users.findByPk(id, {
+      include: [{ model: res_partner, as: "partner", attributes: ["id", "name", "email"] }],
+    });
+    if (!user) return res.status(404).json({ message: "Utilisateur introuvable" });
+
+    // Préparer updates
+    const userUpdates = {};
+    const partnerUpdates = {};
+
+    // --- ACTIVE (admin only) ---
+    if (typeof active !== "undefined") {
+      if (!isAdmin) {
+        return res.status(403).json({ message: "Seul un ADMIN peut changer le statut actif/inactif." });
+      }
+      userUpdates.active = !!active;
+    }
+
+    // --- LOGIN (unicité) ---
+    if (typeof login !== "undefined" && login !== user.login) {
+      const exists = await res_users.findOne({
+        where: { login, id: { [Op.ne]: user.id } },
+        attributes: ["id"],
+      });
+      if (exists) return res.status(409).json({ message: "Login déjà utilisé." });
+      userUpdates.login = login;
+    }
+
+    // --- EMAIL + NAME (stockés aussi côté partner) ---
+    if (typeof email !== "undefined" && email !== user.partner?.email) {
+      userUpdates.email = email;             // si tu tiens une colonne email sur res_users
+      partnerUpdates.email = email;          // source de vérité côté partner
+    }
+    if (typeof name !== "undefined" && name !== user.partner?.name) {
+      partnerUpdates.name = name;
+    }
+
+    // --- PASSWORD (hash) ---
+    if (typeof password !== "undefined" && password) {
+      if (!isSelf && !isAdmin) {
+        return res.status(403).json({ message: "Seul l'utilisateur ou un ADMIN peut changer le mot de passe." });
+      }
+      const hashed = await bcrypt.hash(password, 10);
+      userUpdates.password = hashed;
+    }
+
+    // Rien à faire ?
+    if (
+      !Object.keys(userUpdates).length &&
+      !Object.keys(partnerUpdates).length
+    ) {
+      return res.status(200).json({ message: "Aucune modification." });
+    }
+
+    // Transaction
+    await sequelize.transaction(async (t) => {
+      if (Object.keys(userUpdates).length) {
+        await user.update(userUpdates, { transaction: t });
+      }
+      if (Object.keys(partnerUpdates).length) {
+        await res_partner.update(partnerUpdates, { where: { id: user.partner_id }, transaction: t });
+      }
+    });
+
+    // Recharger pour la réponse
+    const refreshed = await res_users.findByPk(id, {
+      include: [{ model: res_partner, as: "partner", attributes: ["name", "email"] }],
+    });
+
+    return res.status(200).json({
+      message: `✅ Utilisateur ${refreshed.login} mis à jour.`,
+      user: {
+        id: refreshed.id,
+        login: refreshed.login,
+        email: refreshed.partner?.email || null,
+        name: refreshed.partner?.name || null,
+        active: refreshed.active,
+      },
+    });
   } catch (error) {
-    console.error('Erreur dans updateUser:', error);
-    res.status(500).json({ message: 'Erreur serveur interne.' });
+    console.error("Erreur dans updateUser:", error);
+    return res.status(500).json({ message: "Erreur serveur interne." });
   }
 };
+
 
 /* ------------------------------- Get clients ---------------------------- */
 

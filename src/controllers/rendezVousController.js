@@ -148,18 +148,47 @@ exports.confirmer = async (req, res) => {
   }
 };
 
-// PUT /rendezvous/annuler/:id
+// PUT /rendezvous/annuler/:id   (ADMIN)
 exports.annuler = async (req, res) => {
   try {
-    const rdv = await RendezVous.findByPk(req.params.id);
+    const role = (req.user?.role || '').toUpperCase();
+    if (role !== 'ADMIN') {
+      return res.status(403).json({ message: "⛔ Accès réservé à l'administrateur" });
+    }
+
+    const rdv = await RendezVous.findByPk(req.params.id, {
+      include: [
+        { model: User, as: 'client', include: [{ model: Partner, as: 'partner' }] },
+      ],
+    });
     if (!rdv) return res.status(404).json({ message: 'Rendez-vous non trouvé' });
 
     rdv.statut = 'annule';
     await rdv.save();
 
-    res.json({ message: 'Rendez-vous annulé', rdv });
+    // ✉️ notifier le client si on a un e-mail
+    const clientEmail = rdv?.client?.partner?.email;
+    const clientNom   = rdv?.client?.partner?.name || 'Client';
+    if (clientEmail) {
+      await sendEmailToClient({
+        to: clientEmail,
+        subject: '❌ Votre rendez-vous CETIME a été annulé',
+        html: `
+          <div style="font-family: Arial, sans-serif; font-size: 16px;">
+            <p>Bonjour ${clientNom},</p>
+            <p>Nous vous informons que votre rendez-vous a été annulé par l'administrateur.</p>
+            <p><strong>Date initiale :</strong> ${new Date(rdv.dateRdv).toLocaleString()}</p>
+            <p>Vous pouvez reprendre un nouveau rendez-vous à tout moment.</p>
+            <p>Cordialement,<br/>L'équipe CETIME</p>
+          </div>
+        `,
+      });
+    }
+
+    return res.json({ message: 'Rendez-vous annulé (email client envoyé si disponible)', rdv });
   } catch (error) {
-    res.status(500).json({ message: "Erreur lors de l'annulation", error });
+    console.error("❌ Erreur lors de l'annulation:", error);
+    return res.status(500).json({ message: "Erreur lors de l'annulation", error });
   }
 };
 

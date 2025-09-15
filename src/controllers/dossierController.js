@@ -362,14 +362,13 @@ exports.summary = async (req, res) => {
 // états techniques réellement présents en DB
 const ALLOWED_STATES = new Set(['closed', 'done', 'open', 'draft', 'rejected']);
 
+// controllers/Prestation.controller.js
+
 exports.listByState = async (req, res) => {
   try {
     const state = String(req.query.state || '').toLowerCase();
-
     if (!state) {
-      return res
-        .status(400)
-        .json({ message: "Paramètre 'state' manquant. Ex: ?state=closed" });
+      return res.status(400).json({ message: "Paramètre 'state' manquant. Ex: ?state=closed" });
     }
     if (!ALLOWED_STATES.has(state)) {
       return res.status(400).json({
@@ -379,10 +378,7 @@ exports.listByState = async (req, res) => {
     }
 
     const page = Math.max(1, parseInt(req.query.page, 10) || 1);
-    const pageSize = Math.min(
-      100,
-      Math.max(1, parseInt(req.query.pageSize, 10) || 10),
-    );
+    const pageSize = Math.min(100, Math.max(1, parseInt(req.query.pageSize, 10) || 10));
     const q = String(req.query.q || '').trim();
     const offset = (page - 1) * pageSize;
 
@@ -395,17 +391,25 @@ exports.listByState = async (req, res) => {
 
     const rowsSql = `
       SELECT
-        pp.id, pp.prestation, pp.name_primary, pp.date, pp.iat,
-        pp.reference_bordereau, pp.department_id, pp.activity_id,
+        pp.id,
+        pp.prestation,
+        pp.name_primary,
+        -- 👇 on normalise la date ici
+        COALESCE(pp.date, pp.date_creation, pp.create_date) AS date,
+        pp.iat,
+        pp.reference_bordereau,
+        pp.department_id,
+        pp.activity_id,
         d.name  AS department_name,
         pt.name AS activity_name
       FROM prestation_prestation pp
-      LEFT JOIN hr_department   d  ON d.id  = pp.department_id
+      LEFT JOIN hr_department    d  ON d.id  = pp.department_id
       LEFT JOIN product_template pt ON pt.id = pp.activity_id
       WHERE ${where}
       ORDER BY pp.id DESC
       LIMIT :limit OFFSET :offset
     `;
+
     const countSql = `
       SELECT COUNT(*)::int AS count
       FROM prestation_prestation pp
@@ -426,6 +430,7 @@ exports.listByState = async (req, res) => {
     res.status(500).json({ message: 'Erreur listByState', error: String(e) });
   }
 };
+
 
 /* ---------------------------- Liste générique ----------------------------- */
 /** GET /prestations?q=...&state=...&limit=...&offset=...&order=id:DESC */
